@@ -52,3 +52,27 @@ Vale la pena señalar dos cosas clave del grafo:
 * **Serialización (Todo tiene que poder viajar por la red):** El Driver agarra la función que escribimos (y todo su entorno capturado), la empaqueta y se la manda por la red a todos los workers. Por lo tanto, todo lo que esté adentro de esa función (variables, objetos, clases) tiene que ser "serializable" (convertible a bytes). Si le pasamos algo que no se puede empaquetar, como una conexión abierta a una base de datos o a un archivo local, Spark va a frenar todo y tirar un error `NotSerializableException` antes de arrancar, porque no sabe cómo mandarlo por el cable.
 * **Estado compartido (Los workers son islas aisladas):** Cada worker ejecuta una copia de nuestra función y trabaja con su propia memoria aislada. Si intentamos modificar una variable global normal desde adentro de un map (ej un contador), cada worker va a sumar en su propia copia local, y el Driver nunca se va a enterar del resultado real. Para agregar o compartir información de forma segura entre todos, Spark nos obliga a usar sus abstracciones nativas (como `reduceByKey`) o herramientas específicas diseñadas para esto (como los Acumuladores o las variables Broadcast).
 * **Efectos secundarios (No dejes rastros afuera):** Nuestras funciones tienen que ser "puras": agarran un dato, lo transforman y devuelven el resultado, sin alterar nada del mundo exterior. Como Spark está diseñado para tolerar fallos, si un worker se clava en la mitad del trabajo, Spark reinicia esa misma tarea en otro lado. Si nuestra función tenía el efecto secundario de insertar un registro, generaríamos inconsistencias o terminaríamos duplicando datos sin querer.
+
+# Ejercicio 2 — Paralelizar la descarga de feeds
+
+Decisiones de diseño:
+
+* **Carga de suscripciones en el driver:** Usamos FileIO.readSubscriptions (que devuelve un Either para atajar errores de formato o archivo no encontrado) antes de paralelizar. Esto asegura que si el JSON inicial está roto o no existe, el programa corta de una sin levantar los workers al vicio.
+
+* **flatMap para la descarga:** Usamos flatMap sobre el RDD de suscripciones porque cada URL nos puede dar N posts, o darnos cero si se cae la red o el parseo. Es la operación ideal para aplanar todo en un solo RDD[Post].
+
+* **Manejo de fallos con Option/List.empty:** Dentro del flatMap, atajamos el resultado de downloadFeed con pattern matching. Si falla (devuelve None), imprimimos el warning y retornamos un List.empty[Post]. De esta forma aislamos el error y el pipeline sigue procesando los demás feeds.
+
+* **Estadísticas mediante múltiples acciones y RDD auxiliares:** Para no romper la pureza de las transformaciones y evitar Accumulators (que pueden tener comportamientos raros si hay reintentos de tasks), armamos un downloadStatusRDD que simplemente mapea si la descarga y el parseo de cada feed fueron exitosos (Boolean, Boolean). Sobre ese RDD y el de posts filtramos y tiramos acciones como .count() y .mean() para calcular todas las métricas que pide la consigna.
+
+---
+## Pregunta: ¿qué pasaría si dejáramos propagar la excepción?
+
+Si la función que se le pasa al flatMap no captura la excepción y la deja propagar,
+falla la *tarea* (task) que estaba procesando esa partición. Spark reintenta esa tarea
+varias veces (4 por defecto); si sigue fallando, **aborta el stage y, en consecuencia, el
+job entero**. El resultado es que **un solo feed inválido tira abajo toda la descarga**:
+se pierden los posts de todos los demás feeds, incluso los que se habían descargado
+bien, porque el RDD nunca termina de materializarse.
+
+Capturando la excepción dentro de la función y devolviendo List.empty[Post], el fallo queda acotado a ese elemento: ese feed aporta cero posts, el fallo se contabiliza luego mediante nuestro RDD de estado (downloadStatusRDD) y el resto del pipeline continúa normalmente. Es decir, transformamos un fallo fatal para el job en un fallo local y observable, que es justo lo que se espera de un sistema distribuido tolerante a fallos.
