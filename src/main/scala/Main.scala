@@ -16,11 +16,27 @@ object Main {
     spark.sparkContext.setLogLevel("ERROR")
     val sc = spark.sparkContext
 
-    // Load subscriptions
-    val subscriptionOpts = FileIO.readSubscriptions(cmdArgs.subscriptionFile)
+    // EJERCICIO 2A - Leer suscripciones en el driver y paralelizarlas
 
+    // Load subscriptions
+    val subscriptionOpts = FileIO.readSubscriptions(cmdArgs.subscriptionFile) match {
+      case Left(error) =>
+        println(error)
+        spark.stop()
+        return
+      case Right(opts) => opts
+    }
     // Filter out malformed subscriptions (None values)
     val subscriptions = subscriptionOpts.flatten
+
+    if (subscriptions.isEmpty) {
+      println("Error: No valid subscriptions found")
+      spark.stop()
+      return
+    }
+
+    val subscriptionsRDD = sc.parallelize(subscriptions)
+
 
     // Download feeds and parse posts, tracking success/failure
     val downloadResults = subscriptions.map { subscription =>
