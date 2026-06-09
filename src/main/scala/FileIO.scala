@@ -61,10 +61,14 @@ object FileIO {
    * @return Option containing JSON as String, None on network error or timeout
    */
   def downloadFeed(url: String): Option[String] = {
-    val source = Source.fromURL(url)
-    val content = source.mkString
-    source.close()
-    Some(content)
+    try {
+      val source = Source.fromURL(url)
+      val content = source.mkString
+      source.close()
+      Some(content)
+    } catch {
+      case _: Exception => None
+    }
   }
 
   /**
@@ -73,13 +77,17 @@ object FileIO {
    * @return Option containing list of entities, None if file missing
    */
   def readDictionaryFile(filePath: String): Option[List[String]] = {
-    val source = Source.fromFile(filePath)
-    val lines = source.getLines()
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .filterNot(_.startsWith("#"))
-      .toList
-    source.close()
-    Some(lines)
+    try {
+      val source = Source.fromFile(filePath)
+      val lines = source.getLines()
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .filterNot(_.startsWith("#"))
+        .toList
+      source.close()
+      Some(lines)
+    } catch {
+      case _: Exception => None
+    }
   }
 }
