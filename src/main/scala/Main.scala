@@ -61,17 +61,46 @@ object Main {
       post.selftext.nonEmpty &&
       post.selftext.trim.nonEmpty
     }
-    
-    // Prepare statistics
-    val stats = Map(
-      "feedsSuccess" -> feedsSuccess,
-      "feedsFailed" -> feedsFailed,
-      "postsSuccess" -> postsSuccess,
-      "postsFailed" -> postsFailed,
-      "postsFiltered" -> postsFiltered,
-      "avgChars" -> avgChars
-    )
 
+    // EJERCICIO 2C - Calcular e imprimir estadisticas
+
+    val downloadStatusRDD = subscriptionsRDD.map { subscription =>
+      FileIO.downloadFeed(subscription.url) match {
+        case Some(content) =>
+          val posts = JsonParser.parsePosts(content, subscription)
+          (true, posts.nonEmpty)  // (descarga OK, tuvo al menos un post)
+        case None =>
+          (false, false)           // descarga fallida
+      }
+    }
+
+    val feedsSuccess = downloadStatusRDD.filter(_._1).count().toInt
+    val feedsFailed  = downloadStatusRDD.filter(!_._1).count().toInt
+    // postsFailed: suscripciones de las que no se obtuvo ningún post
+    // (fallo de descarga O fallo de parseo)
+    val postsFailed  = downloadStatusRDD.filter(!_._2).count().toInt
+
+    val postsSuccess  = allPostsRDD.count().toInt
+    val filteredCount = filteredPostsRDD.count().toInt
+    val postsFiltered = postsSuccess - filteredCount
+  
+    // Prepare statistics
+    
+    val avgChars: Int =
+      if (filteredCount == 0) 0
+      else filteredPostsRDD
+        .map(p => (p.title.length + p.selftext.length).toDouble)
+        .mean()
+        .toInt
+
+    val stats = Map(
+      "feedsSuccess"  -> feedsSuccess,
+      "feedsFailed"   -> feedsFailed,
+      "postsSuccess"  -> postsSuccess,
+      "postsFailed"   -> postsFailed,
+      "postsFiltered" -> postsFiltered,
+      "avgChars"      -> avgChars
+    )
     // Print output
     println(Formatters.formatProcessingStats(stats))
     println()
