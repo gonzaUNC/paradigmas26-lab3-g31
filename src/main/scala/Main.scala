@@ -18,6 +18,7 @@ object Main {
 
     // EJERCICIO 2A - Leer suscripciones en el driver y paralelizarlas
 
+    // Distribuimos las descargas de cada feed (una por suscripcion), que es lo costoso
     // Load subscriptions
     val subscriptionOpts = FileIO.readSubscriptions(cmdArgs.subscriptionFile) match {
       case Left(error) =>
@@ -34,34 +35,33 @@ object Main {
       spark.stop()
       return
     }
-
+    
+    // Eliminar las entradas malformadas (las que readSubscriptions marcó None)
     val subscriptionsRDD = sc.parallelize(subscriptions)
 
+    // EJERCICIO 2B - flatMap sobre el RDD de suscripciones
 
-    // Download feeds and parse posts, tracking success/failure
-    val downloadResults = subscriptions.map { subscription =>
-      val feedOpt = FileIO.downloadFeed(subscription.url)
-      val posts = feedOpt.fold(List[Post]())(JsonParser.parsePosts(_, subscription.name))
-      (feedOpt.isDefined, posts)
+    // Los errores se capturan DENTRO del flatMap para que un fallo no cancele
+    // el procesamiento de las demás suscripciones.
+    
+    val allPostsRDD = subscriptionsRDD.flatMap { subscription =>
+      FileIO.downloadFeed(subscription.url) match {
+        case Some(content) =>
+          JsonParser.parsePosts(content, subscription)  // List[Post], puede ser vacia
+        case None =>
+          println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+          List.empty[Post]
+      }
     }
 
-    // Count feed successes/failures
-    val feedsSuccess = downloadResults.count(_._1)
-    val feedsFailed = downloadResults.length - feedsSuccess
-
-    // Flatten all posts and count JSON parse failures
-    val allPosts = downloadResults.flatMap(_._2)
-    val postsSuccess = allPosts.length
-    val postsFailed = downloadResults.count(_._2.isEmpty)
-
-    // Filter empty posts
-    val filteredPosts = Analyzer.filterEmptyPosts(allPosts)
-    val postsFiltered = allPosts.length - filteredPosts.length
-
-    // Calculate average characters in filtered posts
-    val totalChars = filteredPosts.map(post => post.title.length + post.selftext.length).sum
-    val avgChars = if (filteredPosts.nonEmpty) totalChars / filteredPosts.length else 0
-
+    // Filtrar posts donde title o selftext están vacíos
+    // Se hace despues del flatMap para poder contar cuántos se filtraron
+    val filteredPostsRDD = allPostsRDD.filter { post =>
+      post.title.nonEmpty &&
+      post.selftext.nonEmpty &&
+      post.selftext.trim.nonEmpty
+    }
+    
     // Prepare statistics
     val stats = Map(
       "feedsSuccess" -> feedsSuccess,
