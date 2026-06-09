@@ -1,3 +1,32 @@
+# Ejercicio 1 — Arquitectura del pipeline distribuido
+
+**a) Arquitectura y flujo de datos del pipeline:**
+
+A continuación se presenta el diagrama general del pipeline de procesamiento diseñado, ilustrando el flujo de los datos desde el origen en el Driver, su paso por el clúster (Workers/Shuffle) y el retorno de los resultados finales:
+
+![Diagrama del Pipeline](img/diagrama.png)
+
+Este diagrama se traduce en las siguientes transformaciones y operaciones dentro de Spark. En la siguiente tabla se detalla el tipo en Scala de cada conexión, la operación aplicada y dónde se ejecuta:
+
+| De → A | Operación | Tipo de la conexión | Dónde corre |
+|--------|-----------|---------------------|-------------|
+| Archivo → suscripciones | lectura del JSON | `List[Subscription]` | Driver |
+| Suscripciones → RDD | `parallelize` | `RDD[Subscription]` | Driver → cluster |
+| Descarga de feeds | `flatMap` | `RDD[Post]` | Workers |
+| Filtrado de vacíos | `filter` | `RDD[Post]` | Workers |
+| Extracción + clasificación | `flatMap` | `RDD[NamedEntity]` | Workers |
+| Armado del par clave-valor | `map` | `RDD[((String, String), Int)]` | Workers |
+| Conteo por entidad | `reduceByKey` | `RDD[((String, String), Int)]` | Shuffle (barrera) |
+| Ranking | `sortBy` | `RDD[((String, String), Int)]` | Shuffle (barrera) |
+| Impresión | acción (`collect`/`foreach`) | `Array[((String, String), Int)]` | Driver |
+
+*(Nota: La clave `(String, String)` representa el par `(tipo, nombre)` de la entidad y el `Int` es su conteo).*
+
+Vale la pena señalar dos cosas clave del grafo: 
+1. **El lugar de ejecución:** Los extremos corren en el driver y el cuerpo en los workers. La lectura del archivo produce una `List[Subscription]` que vive en el driver y recién se vuelve distribuida al pasar por `parallelize`. Del otro lado, la impresión es una acción que vuelve a concentrar el resultado en el driver.
+2. **Mutación de tipos:** El tipo del dato va mutando a lo largo del pipeline (`Subscription` → `Post` → `NamedEntity` → par `((tipo, nombre), conteo)`), lo que deja en claro que cada etapa es una transformación de tipo, no una simple repetición del mismo dato.
+
+---
 **b)** Para cada paso del pipeline, determinen si puede expresarse como una de las abstracciones de Spark:
 
 * **Conexión:** no lo podemos abstraer con estas transformaciones ya que esto lo ejecuta el Driver, no los workers. No se transforman datos, sino que se prepara el entorno y se establece el origen de la información.
