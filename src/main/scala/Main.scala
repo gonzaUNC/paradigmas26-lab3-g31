@@ -105,14 +105,25 @@ object Main {
     println(Formatters.formatProcessingStats(stats))
     println()
 
-    // Check if we have any posts to process
-    if (filteredPosts.isEmpty) {
+    // EJERCICIO 2D - Salir si no hay posts válidos
+
+    if (filteredCount == 0) {
       println("Error: No valid posts downloaded after filtering")
+      spark.stop()
+      return
+    }
+
+    if (!new java.io.File(cmdArgs.entitiesDir).exists()) {
+      println(s"Error: entities directory '${cmdArgs.entitiesDir}' not found")
+      spark.stop()
       return
     }
 
     // Load dictionaries
     val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
+
+    // collect() trae los posts del RDD distribuido al driver
+    val filteredPosts = filteredPostsRDD.collect().toList
 
     // Detect entities in all posts (combine title and selftext)
     val allEntities = filteredPosts.flatMap { post =>
@@ -127,5 +138,7 @@ object Main {
     println(Formatters.formatTypeStats(typeStats))
     println()
     println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))
+
+    spark.stop()
   }
 }
