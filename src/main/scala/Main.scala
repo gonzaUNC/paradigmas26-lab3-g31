@@ -6,6 +6,16 @@ object Main {
       case None => return // scopt prints error messages
     }
 
+    // creamos SparkSession localmente
+    val spark = SparkSession.builder()
+      .appName("RedditNER")
+      .master("local[*]")
+      .config("spark.driver.memory", "768m") // limitamos por la ram
+      .config("spark.ui.enabled", "false")
+      .getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+    val sc = spark.sparkContext
+
     // Load subscriptions
     val subscriptionOpts = FileIO.readSubscriptions(cmdArgs.subscriptionFile)
 
