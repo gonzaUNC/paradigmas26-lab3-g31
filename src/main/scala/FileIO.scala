@@ -25,10 +25,34 @@ object FileIO {
         return Left(s"Error: Could not load $filePath - file not found")
     }
 
-    // Temporalmente parseamos y mapeamos directo para no romper la compilación en este paso
-    val json = parse(content)
-    val subscriptions = json.extract[List[Map[String, String]]]
-    Right(subscriptions.map { sub => Some(Subscription(sub("name"), sub("url"))) })
+    // Parsear JSON (puede no ser JSON válido)
+    val json = try {
+      parse(content)
+    } catch {
+      case _: Exception =>
+        return Left(s"Error: Could not load $filePath - invalid JSON format")
+    }
+
+    // Extraer lista de mapas (puede no tener la estructura esperada)
+    val subscriptionMaps = try {
+      json.extract[List[Map[String, String]]]
+    } catch {
+      case _: Exception =>
+        return Left(s"Error: Could not load $filePath - invalid JSON format")
+    }
+
+    // Convertir cada entrada: None si le falta "name" o "url"
+    val subscriptions = subscriptionMaps.map { sub =>
+      try {
+        Some(Subscription(sub("name"), sub("url")))
+      } catch {
+        case _: NoSuchElementException =>
+          println("Warning: Skipping malformed subscription (missing 'name' or 'url' field)")
+          None
+      }
+    }
+
+    Right(subscriptions)
   }
 
   /**
