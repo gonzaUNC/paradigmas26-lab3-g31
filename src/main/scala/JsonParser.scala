@@ -6,10 +6,10 @@ object JsonParser {
   /**
    * Parse Reddit JSON feed and extract posts.
    * @param jsonContent JSON string from Reddit API
-   * @param subscriptionName name of subscription (for logging)
+   * @param subscription subscription object (for logging)
    * @return list of posts, empty list if parsing fails
    */
-  def parsePosts(jsonContent: String, subscriptionName: String): List[Post] = {
+  def parsePosts(jsonContent: String, subscription: Subscription): List[Post] = {
     try {
       implicit val formats: Formats = DefaultFormats
 
@@ -24,7 +24,7 @@ object JsonParser {
       }
     } catch {
       case _: Exception =>
-        println(s"Warning: Failed to parse JSON from '$subscriptionName'")
+        println(s"Warning: Failed to parse posts from '${subscription.name}' (${subscription.url})")
         List()
     }
   }
