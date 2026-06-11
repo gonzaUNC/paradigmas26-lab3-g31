@@ -41,6 +41,13 @@ object Main {
     // Eliminar las entradas malformadas (las que readSubscriptions marcó None)
     val subscriptionsRDD = sc.parallelize(subscriptions)
 
+    // EJERCICIO 4A - Definir Accumulators ANTES de lanzar el pipeline
+
+    val accFeedsSuccess  = sc.longAccumulator("feedsSuccess")
+    val accFeedsFailed   = sc.longAccumulator("feedsFailed")
+    val accPostsTotal    = sc.longAccumulator("postsTotal")
+    val accPostsFiltered = sc.longAccumulator("postsFiltered")
+
     // EJERCICIO 2B - flatMap sobre el RDD de suscripciones
 
     // Los errores se capturan DENTRO del flatMap para que un fallo no cancele
@@ -48,20 +55,28 @@ object Main {
     
     val allPostsRDD = subscriptionsRDD.flatMap { subscription =>
       FileIO.downloadFeed(subscription.url) match {
-        case Some(content) =>
-          JsonParser.parsePosts(content, subscription)  // List[Post], puede ser vacia
-        case None =>
-          println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
-          List.empty[Post]
+      case Some(content) =>
+        val posts = JsonParser.parsePosts(content, subscription)
+        if (posts.nonEmpty) {
+          accFeedsSuccess.add(1)
+          accPostsTotal.add(posts.length)
+        } else {
+          accFeedsFailed.add(1) // descarga OK pero sin posts
+        }
+        posts
+      case None =>
+        println(s"Warning: Failed to download from '${subscription.name}' (${subscription.url})")
+        accFeedsFailed.add(1)
+        List.empty[Post]
       }
     }
 
     // Filtrar posts donde title o selftext están vacíos
     // Se hace despues del flatMap para poder contar cuántos se filtraron
     val filteredPostsRDD = allPostsRDD.filter { post =>
-      post.title.nonEmpty &&
-      post.selftext.nonEmpty &&
-      post.selftext.trim.nonEmpty
+      val keep = post.title.nonEmpty && post.selftext.nonEmpty && post.selftext.trim.nonEmpty
+      if (!keep) accPostsFiltered.add(1)
+      keep
     }
 
     // EJERCICIO 2C - Calcular e imprimir estadisticas
@@ -143,6 +158,14 @@ object Main {
 
     val entityCountsMap: Map[(String, String), Int] = entityCountsRDD.collect().toMap
 
+    // EJERCICIO 4A - Imprimir los cuatro Accumulators luego de la acción terminal final
+    println("============ MÉTRICAS DE EJECUCIÓN (Accumulators) ============")
+    println(s"Feeds descargados exitosamente : ${accFeedsSuccess.value}")
+    println(s"Feeds fallidos                 : ${accFeedsFailed.value}")
+    println(s"Posts descargados en total     : ${accPostsTotal.value}")
+    println(s"Posts descartados (vacíos)     : ${accPostsFiltered.value}")
+    println()
+    
     val typeStats: Map[String, Int] = {
       val byType = entityCountsMap
         .groupBy { case ((entityType, _), _) => entityType }
