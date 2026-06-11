@@ -86,3 +86,17 @@ Decisiones de diseño:
 * **Pipeline encadenado sin collect intermedios:** Las tres transformaciones (`flatMap` → `map` → `reduceByKey`) se encadenan sin materializar el RDD entre etapas. El `collect()` se hace solo al final, cuando ya tenemos los conteos agregados, trayendo al driver muchos menos datos que si hubiéramos traído todos los posts o todas las entidades crudas.
 
 * **typeStats calculado desde el mapa reducido:** Una vez que `reduceByKey` devuelve el mapa `((tipo, nombre) → count)`, los stats por tipo los calculamos agrupando ese mapa en el driver, sin ninguna acción adicional sobre el cluster.
+
+---
+
+## Pregunta: `reduceByKey` es una barrera de sincronización. ¿Qué ocurre en el cluster en ese punto? ¿Por qué es inevitable?
+
+`reduceByKey` dispara un *shuffle*: Spark redistribuye todos los pares por la red para que cada clave `(tipo, nombre)` quede concentrada en un único nodo, que recién ahí puede sumar los 1s y dar el conteo final. Es inevitable porque el conteo de una entidad depende de cuántas veces apareció en cualquier post de cualquier worker; no hay forma de saber el total sin cruzar información de todos los nodos.
+
+## Pregunta: ¿Qué restricciones debe cumplir la función que se le pasa a `reduceByKey`?
+
+Tiene que ser **asociativa** y **conmutativa**. Spark puede combinar subtotales en cualquier orden y en múltiples pasadas (primero dentro del mismo worker, luego entre workers), así que la función tiene que dar el mismo resultado sin importar ese orden. La suma entera `(_ + _)` cumple ambas. Una diferencia `(_ - _)` no y daría resultados incorrectos.
+
+## Pregunta: ¿Dónde se hace la lectura del diccionario? ¿En el driver o los workers?
+
+En el **driver**, antes de cualquier transformación distribuida. Si se leyera dentro del `flatMap`, los workers necesitarían acceder al filesystem local del driver (imposible en un cluster real) y además lo leerían N veces innecesariamente, una por partición.
