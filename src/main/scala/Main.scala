@@ -191,6 +191,9 @@ object Main {
     println()
     println(Formatters.formatEntityStats(entityCounts, cmdArgs.topK))
 
+    // EJERCICIO 5C - unpersist una vez que ya no necesitamos el RDD cacheado
+    filteredPostsRDD.unpersist()
+
     spark.stop()
   }
 }
