@@ -89,18 +89,6 @@ object Main {
     val t1 = System.currentTimeMillis()
     println(s"[Tiempo] Descarga + filtrado: ${(t1 - t0) / 1000.0} s")
 
-    // EJERCICIO 2C - Calcular e imprimir estadisticas
-
-    val downloadStatusRDD = subscriptionsRDD.map { subscription =>
-      FileIO.downloadFeed(subscription.url) match {
-        case Some(content) =>
-          val posts = JsonParser.parsePosts(content, subscription)
-          (true, posts.nonEmpty)  // (descarga OK, tuvo al menos un post)
-        case None =>
-          (false, false)           // descarga fallida
-      }
-    }
-
     // Ahora los Accumulators tienen sus valores definitivos (la acción ya terminó)
     val feedsSuccess  = accFeedsSuccess.value.toInt
     val feedsFailed   = accFeedsFailed.value.toInt
@@ -120,7 +108,7 @@ object Main {
       "feedsSuccess"  -> feedsSuccess,
       "feedsFailed"   -> feedsFailed,
       "postsSuccess"  -> postsSuccess,
-      "postsFailed"   -> postsFailed,
+      "postsFailed"   -> 0,
       "postsFiltered" -> postsFiltered,
       "avgChars"      -> avgChars
     )
@@ -171,7 +159,7 @@ object Main {
     println(s"[Tiempo] NER + reducción: ${(t3 - t2) / 1000.0} s")
     println(s"[Tiempo] Total pipeline: ${(t3 - t0) / 1000.0} s")
     println()
-    
+
     // EJERCICIO 4A - Imprimir los cuatro Accumulators luego de la acción terminal final
     println("============ MÉTRICAS DE EJECUCIÓN (Accumulators) ============")
     println(s"Feeds descargados exitosamente : ${accFeedsSuccess.value}")
