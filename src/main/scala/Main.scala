@@ -124,18 +124,35 @@ object Main {
     // Load dictionaries
     val dictionary = Dictionary.loadAll(cmdArgs.entitiesDir)
 
-    // collect() trae los posts del RDD distribuido al driver
-    val filteredPosts = filteredPostsRDD.collect().toList
+    // EJERCICIO 3 - Pipeline Map-Reduce distribuido para NER
+    val broadcastDict = sc.broadcast(dictionary)
 
-    // Detect entities in all posts (combine title and selftext)
-    val allEntities = filteredPosts.flatMap { post =>
+    // EJERCICIO 3A flatMap: por cada post, extraer sus entidades nombradas
+    val entitiesRDD = filteredPostsRDD.flatMap { post =>
       val combinedText = post.title + " " + post.selftext
-      Analyzer.detectEntities(combinedText, dictionary)
+      Analyzer.detectEntities(combinedText, broadcastDict.value)
     }
 
-    // Count entities
-    val entityCounts = Analyzer.countEntities(allEntities)
-    val typeStats = Analyzer.countByType(allEntities)
+    // EJERCICIO 3B map: convertir cada NamedEntity en ((tipo, nombre), 1)
+    val entityPairsRDD = entitiesRDD.map { entity =>
+      ((entity.entityType, entity.text), 1)
+    }
+
+    // EJERCICIO 3C reduceByKey: sumar los 1s para obtener el conteo total por entidad
+    val entityCountsRDD = entityPairsRDD.reduceByKey(_ + _)
+
+    val entityCountsMap: Map[(String, String), Int] = entityCountsRDD.collect().toMap
+
+    val typeStats: Map[String, Int] = {
+      val byType = entityCountsMap
+        .groupBy { case ((entityType, _), _) => entityType }
+        .view
+        .mapValues(_.values.sum)
+        .toMap
+      byType + ("total" -> entityCountsMap.values.sum)
+    }
+
+    val entityCounts = entityCountsMap
 
     println(Formatters.formatTypeStats(typeStats))
     println()
