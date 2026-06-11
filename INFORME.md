@@ -150,4 +150,16 @@ Decisiones de diseño:
 * **`cache()` sobre `filteredPostsRDD`:** Es el único RDD que se usa en más de una acción: primero en `.count()` para las estadísticas, luego en `.map(...).mean()` para el promedio de caracteres, y finalmente en el `flatMap` de NER. Sin cache, cada una de esas acciones recomputaría todo desde el principio, incluyendo las descargas HTTP. Con `.cache()` la primera acción materializa el RDD en memoria y las siguientes lo leen directamente desde ahí.
 * **`unpersist()` en todos los puntos de salida:** Llamamos a `filteredPostsRDD.unpersist()` tanto en las salidas tempranas (no hay posts válidos, no existe el directorio de entidades) como al final del pipeline normal. Así liberamos la memoria del executor ni bien el RDD deja de ser necesario, sin esperar a que Spark lo descarte solo por presión de memoria.
 * **No cacheamos `entityCountsRDD`:** Solo se usa en una acción (`collect()`), así que cachearlo sería un gasto de memoria sin beneficio.
-
+---
+ 
+## Pregunta: ¿Qué ocurriría si no llamaran a `cache()`?
+ 
+Cada acción sobre `filteredPostsRDD` recomputaría todo el pipeline desde `sc.parallelize(subscriptions)`: volvería a hacer las descargas HTTP, el parseo y el filtrado. Con tres acciones sobre ese RDD (`count()`, `mean()` y el `flatMap` de NER), las descargas se ejecutarían **tres veces**. Para datasets grandes eso es inaceptable, y en un entorno con rate limiting o feeds inestables también produce resultados inconsistentes entre acciones.
+ 
+## Pregunta: ¿Por qué es incorrecto llamar a `collect()` entre los pasos a) y b) del ejercicio 3 y luego continuar el pipeline?
+ 
+Si llamáramos a `collect()` después del `flatMap` de entidades y antes del `map`/`reduceByKey`, traeríamos todas las entidades crudas al driver y haríamos el conteo secuencialmente ahí. El problema es doble: primero, rompemos la distribución del trabajo porque el conteo pasa a ejecutarse en un solo proceso; segundo, si hay muchos posts, el driver puede quedarse sin memoria al intentar acumular todas las entidades en un solo `Array`. El `collect()` debe hacerse lo más tarde posible, cuando los datos ya están agregados y son pocos.
+ 
+## Pregunta: `cache()` es también lazy. ¿En qué momento se almacena realmente el RDD en memoria?
+ 
+Llamar a `.cache()` solo marca el RDD como "a persistir", pero no ejecuta nada. El RDD se almacena en memoria recién cuando se dispara la **primera acción** que lo recorre, que en nuestro caso es `filteredPostsRDD.count()`. En ese momento Spark materializa las particiones y las guarda en la memoria de los executors. Las acciones siguientes (`mean()` y el `flatMap` de NER) ya encuentran las particiones cacheadas y las leen directamente sin recomputar.
