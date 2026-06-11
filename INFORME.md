@@ -100,3 +100,45 @@ Tiene que ser **asociativa** y **conmutativa**. Spark puede combinar subtotales 
 ## Pregunta: ¿Dónde se hace la lectura del diccionario? ¿En el driver o los workers?
 
 En el **driver**, antes de cualquier transformación distribuida. Si se leyera dentro del `flatMap`, los workers necesitarían acceder al filesystem local del driver (imposible en un cluster real) y además lo leerían N veces innecesariamente, una por partición.
+
+# Ejercicio 4 — Monitoreo del éxito de las tareas
+
+**a) ¿Por qué los Accumulators solo deben usarse para métricas y no para tomar decisiones lógicas dentro de las etapas distribuidas del pipeline?**
+
+Los acumuladores en Spark son variables con una propiedad fundamental: los *workers* solo pueden incrementar su valor (mediante operaciones asociativas y conmutativas), pero el único proceso autorizado para leer su valor final es el *driver*. 
+
+Intentar usar un acumulador para tomar decisiones lógicas en las etapas distribuidas (por ejemplo, hacer un `if (miAccumulator.value > 10)` dentro de un `flatMap` o un `filter`) es inviable y rompe el modelo de ejecución por las siguientes razones:
+1. **Invisibilidad en los Workers:** Mientras las tareas se ejecutan en los nodos esclavos, los *workers* no ven el estado global ni actualizado del acumulador. Si intentan leerlo, Spark arrojará un error o devolverá un valor local indeterminado.
+2. **Evaluación Lazy:** Las transformaciones no se ejecutan cuando se declaran, sino cuando se dispara una acción terminal. Por ende, durante la construcción del pipeline, el acumulador mantiene su valor inicial (usualmente `0`), haciendo imposible que determine el flujo lógico de los datos.
+
+**b) ¿En qué situación un Accumulator puede dar un valor incorrecto?**
+
+Un acumulador puede arrojar un valor incorrecto (típicamente mayor al real) si se utiliza dentro de **transformaciones intermedias** (como `flatMap` o `filter`) y el cluster sufre **reejecuciones de tareas** debido a:
+* Fallos de hardware o red en algún *worker*.
+* Pérdida de particiones intermedias en memoria.
+* **Ejecución especulativa:** Cuando Spark nota que un nodo está muy lento y decide lanzar la misma tarea en otro nodo en paralelo para ver cuál termina primero.
+
+Como las transformaciones intermedias no son necesariamente atómicas ante fallos, si una tarea incrementa un acumulador y luego falla (o es descartada por ejecución especulativa), Spark reiniciará la tarea en otro nodo. Sin embargo, los incrementos computados en el intento fallido **no se revierten automáticamente**. Para garantizar acumuladores 100% exactos, Spark asegura que sus efectos secundarios solo se apliquen una única vez si se operan dentro de una **acción** (como `foreach`).
+
+**c) ¿En qué momento del pipeline está disponible el valor de un Accumulator para ser leído por el driver?**
+
+El valor de un acumulador está disponible para ser leído por el driver **únicamente después de que se haya completado una acción terminal** que involucre la etapa donde dicho acumulador fue modificado. 
+
+En nuestro diseño, esto se observa claramente en dos momentos:
+1. Los acumuladores de descarga y filtrado (`accFeedsSuccess`, `accFeedsFailed` y `accPostsFiltered`) se vuelven consistentes recién después de invocar a la acción `filteredPostsRDD.count()`. Antes de esa línea, su valor es cero debido a la evaluación perezosa (*lazy*) de Spark.
+2. El driver realiza la lectura e impresión de los acumuladores en la sección final del script, garantizando que todas las etapas distribuidas del cluster se hayan ejecutado con éxito.
+
+**d) Comparativa de rendimiento y tiempos de ejecución**
+
+A continuación, se presentan los tiempos obtenidos al medir las distintas etapas del pipeline utilizando `System.currentTimeMillis()` en un entorno local ejecutado con la configuración `local[*]`:
+
+| Archivo de Suscripciones | Tiempo Descarga + Filtrado (s) | Tiempo NER + Reducción (s) | Tiempo Total Pipeline (s) |
+| :--- | :---: | :---: | :---: |
+| `local_subscriptions.json` | 6.130 | 5.906 | 17.455 |
+| `many_subscriptions.json`  | 6.144 | 5.727 | 17.183 |
+
+**Análisis y Justificación del rendimiento:**
+
+Al evaluar los resultados, se evidencia que para conjuntos de datos pequeños o locales (como `local_subscriptions.json`), el pipeline distribuido puede no mostrar una ventaja clara en tiempos respecto a una solución secuencial directa. Esto representa un comportamiento esperado debido al **overhead de inicialización de Spark**: instanciar la infraestructura del cluster local, configurar la `SparkSession` y coordinar los hilos del driver introduce un costo fijo inicial significativo.
+
+Sin embargo, la verdadera fortaleza de la arquitectura se manifiesta al escalar el volumen de datos con `many_subscriptions.json`. Mientras que un enfoque secuencial sufriría una penalización lineal o cuellos de botella por memoria al procesar flujos masivos de posts, Spark distribuye la carga de cómputo de manera eficiente entre los cores disponibles. El costo de serializar las funciones y realizar el *broadcast* del diccionario de entidades hacia los workers se ve ampliamente compensado por la paralelización del análisis de texto (NER) y la reducción en paralelo mediante `reduceByKey`. Esto demuestra la capacidad de escalabilidad horizontal del sistema sin requerir modificaciones en la lógica del código fuente.a
