@@ -76,3 +76,27 @@ se pierden los posts de todos los demás feeds, incluso los que se habían desca
 bien, porque el RDD nunca termina de materializarse.
 
 Capturando la excepción dentro de la función y devolviendo List.empty[Post], el fallo queda acotado a ese elemento: ese feed aporta cero posts, el fallo se contabiliza luego mediante nuestro RDD de estado (downloadStatusRDD) y el resto del pipeline continúa normalmente. Es decir, transformamos un fallo fatal para el job en un fallo local y observable, que es justo lo que se espera de un sistema distribuido tolerante a fallos.
+
+# Ejercicio 3 — Paralelizar el cómputo de entidades nombradas
+
+Decisiones de diseño:
+
+* **Broadcast del diccionario:** Cargamos el diccionario en el driver con `Dictionary.loadAll` y lo distribuimos con `sc.broadcast`. Si lo capturáramos directo en el closure del `flatMap`, Spark lo serializaría y mandaría con cada tarea individual. Con broadcast se envía una sola copia por worker y todos los tasks la reutilizan desde memoria local.
+
+* **Pipeline encadenado sin collect intermedios:** Las tres transformaciones (`flatMap` → `map` → `reduceByKey`) se encadenan sin materializar el RDD entre etapas. El `collect()` se hace solo al final, cuando ya tenemos los conteos agregados, trayendo al driver muchos menos datos que si hubiéramos traído todos los posts o todas las entidades crudas.
+
+* **typeStats calculado desde el mapa reducido:** Una vez que `reduceByKey` devuelve el mapa `((tipo, nombre) → count)`, los stats por tipo los calculamos agrupando ese mapa en el driver, sin ninguna acción adicional sobre el cluster.
+
+---
+
+## Pregunta: `reduceByKey` es una barrera de sincronización. ¿Qué ocurre en el cluster en ese punto? ¿Por qué es inevitable?
+
+`reduceByKey` dispara un *shuffle*: Spark redistribuye todos los pares por la red para que cada clave `(tipo, nombre)` quede concentrada en un único nodo, que recién ahí puede sumar los 1s y dar el conteo final. Es inevitable porque el conteo de una entidad depende de cuántas veces apareció en cualquier post de cualquier worker; no hay forma de saber el total sin cruzar información de todos los nodos.
+
+## Pregunta: ¿Qué restricciones debe cumplir la función que se le pasa a `reduceByKey`?
+
+Tiene que ser **asociativa** y **conmutativa**. Spark puede combinar subtotales en cualquier orden y en múltiples pasadas (primero dentro del mismo worker, luego entre workers), así que la función tiene que dar el mismo resultado sin importar ese orden. La suma entera `(_ + _)` cumple ambas. Una diferencia `(_ - _)` no y daría resultados incorrectos.
+
+## Pregunta: ¿Dónde se hace la lectura del diccionario? ¿En el driver o los workers?
+
+En el **driver**, antes de cualquier transformación distribuida. Si se leyera dentro del `flatMap`, los workers necesitarían acceder al filesystem local del driver (imposible en un cluster real) y además lo leerían N veces innecesariamente, una por partición.
