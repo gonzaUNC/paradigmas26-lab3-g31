@@ -48,6 +48,9 @@ object Main {
     val accPostsTotal    = sc.longAccumulator("postsTotal")
     val accPostsFiltered = sc.longAccumulator("postsFiltered")
 
+    // EJERCICIO 4C - Medir tiempo de la primera acción terminal (descarga + filtrado)
+    val t0 = System.currentTimeMillis()
+
     // EJERCICIO 2B - flatMap sobre el RDD de suscripciones
 
     // Los errores se capturan DENTRO del flatMap para que un fallo no cancele
@@ -79,6 +82,13 @@ object Main {
       keep
     }
 
+    // EJERCICIO 4B - Usamos los Accumulators para las estadísticas
+    // .count() es la primera acción terminal: materializa allPostsRDD + filteredPostsRDD
+    val filteredCount = filteredPostsRDD.count()
+
+    val t1 = System.currentTimeMillis()
+    println(s"[Tiempo] Descarga + filtrado: ${(t1 - t0) / 1000.0} s")
+
     // EJERCICIO 2C - Calcular e imprimir estadisticas
 
     val downloadStatusRDD = subscriptionsRDD.map { subscription =>
@@ -91,15 +101,11 @@ object Main {
       }
     }
 
-    val feedsSuccess = downloadStatusRDD.filter(_._1).count().toInt
-    val feedsFailed  = downloadStatusRDD.filter(!_._1).count().toInt
-    // postsFailed: suscripciones de las que no se obtuvo ningún post
-    // (fallo de descarga O fallo de parseo)
-    val postsFailed  = downloadStatusRDD.filter(!_._2).count().toInt
-
-    val postsSuccess  = allPostsRDD.count().toInt
-    val filteredCount = filteredPostsRDD.count().toInt
-    val postsFiltered = postsSuccess - filteredCount
+    // Ahora los Accumulators tienen sus valores definitivos (la acción ya terminó)
+    val feedsSuccess  = accFeedsSuccess.value.toInt
+    val feedsFailed   = accFeedsFailed.value.toInt
+    val postsSuccess  = accPostsTotal.value.toInt
+    val postsFiltered = accPostsFiltered.value.toInt
   
     // Prepare statistics
     
@@ -142,6 +148,9 @@ object Main {
     // EJERCICIO 3 - Pipeline Map-Reduce distribuido para NER
     val broadcastDict = sc.broadcast(dictionary)
 
+    // EJERCICIO 4C - Medir tiempo de la segunda acción terminal (NER + reduce)
+    val t2 = System.currentTimeMillis()
+
     // EJERCICIO 3A flatMap: por cada post, extraer sus entidades nombradas
     val entitiesRDD = filteredPostsRDD.flatMap { post =>
       val combinedText = post.title + " " + post.selftext
@@ -158,6 +167,11 @@ object Main {
 
     val entityCountsMap: Map[(String, String), Int] = entityCountsRDD.collect().toMap
 
+    val t3 = System.currentTimeMillis()
+    println(s"[Tiempo] NER + reducción: ${(t3 - t2) / 1000.0} s")
+    println(s"[Tiempo] Total pipeline: ${(t3 - t0) / 1000.0} s")
+    println()
+    
     // EJERCICIO 4A - Imprimir los cuatro Accumulators luego de la acción terminal final
     println("============ MÉTRICAS DE EJECUCIÓN (Accumulators) ============")
     println(s"Feeds descargados exitosamente : ${accFeedsSuccess.value}")
@@ -165,7 +179,7 @@ object Main {
     println(s"Posts descargados en total     : ${accPostsTotal.value}")
     println(s"Posts descartados (vacíos)     : ${accPostsFiltered.value}")
     println()
-    
+
     val typeStats: Map[String, Int] = {
       val byType = entityCountsMap
         .groupBy { case ((entityType, _), _) => entityType }
