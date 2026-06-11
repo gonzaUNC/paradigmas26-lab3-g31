@@ -124,12 +124,16 @@ object Main {
 
     if (filteredCount == 0) {
       println("Error: No valid posts downloaded after filtering")
+      // EJERCICIO 5C - unpersist en salida temprana para liberar memoria
+      filteredPostsRDD.unpersist()
       spark.stop()
       return
     }
 
     if (!new java.io.File(cmdArgs.entitiesDir).exists()) {
       println(s"Error: entities directory '${cmdArgs.entitiesDir}' not found")
+      // EJERCICIO 5C - unpersist en salida temprana para liberar memoria
+      filteredPostsRDD.unpersist()
       spark.stop()
       return
     }
