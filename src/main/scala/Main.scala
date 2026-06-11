@@ -82,6 +82,10 @@ object Main {
       keep
     }
 
+    // EJERCICIO 5B - cache() para evitar recomputar el pipeline (incluyendo descargas HTTP)
+    // desde las acciones siguientes: .count(), .mean() y el flatMap de NER
+    filteredPostsRDD.cache()
+
     // EJERCICIO 4B - Usamos los Accumulators para las estadísticas
     // .count() es la primera acción terminal: materializa allPostsRDD + filteredPostsRDD
     val filteredCount = filteredPostsRDD.count()
