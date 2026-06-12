@@ -1,127 +1,101 @@
-# Reddit Named Entity Recognition System
+# Reddit Named Entity Recognition — Lab 3
 
-This system downloads Reddit posts from specified subreddits and performs named entity recognition (NER) to extract and count entities like people, organizations, universities, programming languages, and places.
+Sistema de procesamiento distribuido con Apache Spark que descarga posts de Reddit, detecta entidades nombradas (personas, organizaciones, lugares, etc.) y muestra un ranking de las más frecuentes.
 
-## How It Works
+## Requisitos
 
-The system combines functional and object-oriented programming paradigms:
+- **Java 17** (requerido por Spark 3.x; versiones más nuevas como 24/25 son incompatibles)
+- **sbt 1.9** o posterior
+- **Scala 2.13** (descargado automáticamente por sbt)
 
-**Functional pipeline**: Downloads feeds from Reddit subscriptions → parses JSON posts → filters empty posts → applies entity detection → aggregates counts → produces formatted output.
+## Instalación de Java 17
 
-**Object-oriented design**: Entity types are modeled as a class hierarchy (Person, Organization, University, Place, Technology, ProgrammingLanguage) with polymorphic behavior. Dictionary loading and output formatting use encapsulated object methods.
-
-## Requirements
-
-- Java 11 or later
-- Scala 2.13
-- sbt 1.9 or later
-
-## Setup
-
-1. Clone or extract the project
-2. No additional dependencies need manual installation—sbt will download them automatically on first build
-
-## Building
-
+### Linux (Ubuntu/Debian)
 ```bash
-sbt compile
+sudo apt update && sudo apt install openjdk-17-jdk
 ```
 
-This downloads json4s and scopt libraries and compiles the Scala code.
+### macOS
+```bash
+brew install openjdk@17
+sudo ln -sfn /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk \
+             /Library/Java/JavaVirtualMachines/openjdk-17.jdk
+```
 
-## Running
+No es necesario cambiar la versión global de Java del sistema; el Makefile detecta y usa Java 17 solo para este proyecto.
 
-Basic usage with defaults:
+## Cómo ejecutar
+
+### Conectando a Reddit real
+
+```bash
+make run
+```
+
+Descarga posts de los subreddits definidos en `data/valid_subscriptions.json`.
+
+### Usando el servidor mock local (sin consultar Reddit)
+
+Primero, descargar el mock desde el [link provisto por la cátedra](https://drive.google.com/file/d/1L0GKui_4FsxTGCQ2EAWllwRW23kHEQZI/view) y levantarlo en una terminal aparte:
+
 ```bash
 sbt run
+# Fake Reddit API running on http://localhost:8123
 ```
 
-With custom parameters:
-```bash
-sbt "run --subscription-file subscriptions.json --entities-dir data --top-k 15"
-```
-
-### Command-Line Arguments
-
-All arguments are optional:
-
-- `--subscription-file <file>`: Path to JSON file containing Reddit subscriptions (default: `subscriptions.json`)
-- `--entities-dir <dir>`: Path to directory containing entity dictionary files (default: `data`)
-- `--top-k <n>`: Number of top entities to display (default: `10`)
-
-## Project Structure
-
-- `src/main/scala/`: Source code
-  - `Main.scala`: Entry point and orchestration
-  - `FileIO.scala`: File and network I/O operations
-  - `JsonParser.scala`: Reddit JSON parsing
-  - `Analyzer.scala`: Entity detection and counting logic
-  - `Dictionary.scala`: Entity dictionary loading
-  - `NamedEntity.scala`: Entity class hierarchy
-  - `Formatters.scala`: Output formatting
-  - `CommandLineArgs.scala`: Argument parsing
-  - `Subscription.scala`, `Post.scala`: Data structures
-
-- `data/`: Entity dictionary files and test data
-  - `people.txt`, `universities.txt`, `languages.txt`, `organizations.txt`, `places.txt`: Entity lists
-  - Test data directories for validation
-
-- `subscriptions.json`: List of Reddit subreddits to process
-
-## Understanding Entity Detection
-
-The system performs dictionary-based entity matching. It reads entity names from dictionary files, then searches for whole-word matches (case-insensitive) in post content. A word matches only if it appears as a complete word, not as part of another word (e.g., "Scala" matches but "java" does not match in "javascript").
-
-## Testing
-
-The system includes integration tests that verify:
-
-- Valid subscription processing with various top-k values
-- Error handling for malformed JSON subscriptions
-- Handling of unreachable URLs
-- Handling of incorrect subscription formats
-- Error detection for missing entity directories
-- Graceful degradation when some entity files are missing
-- Correct output counts for different top-k parameters
-- Default parameter behavior
-
-### Running Tests
+Luego, en otra terminal:
 
 ```bash
-bash tests.sh
+make run-local
 ```
 
-This runs all 9 integration tests and displays:
-- Individual test output with pass/fail results for each assertion
-- Summary showing total tests, passed, errors, and assertion failures
+Usa `data/local_subscriptions.json`, que apunta a `http://localhost:8123`.
 
-### Test Data
+### Comandos disponibles
 
-The `data/` directory contains several test datasets:
+| Comando | Descripción |
+|---------|-------------|
+| `make run` | Ejecuta con `data/valid_subscriptions.json` (Reddit real) |
+| `make run-local` | Ejecuta con `data/local_subscriptions.json` (mock local) |
+| `make compile` | Solo compila sin ejecutar |
+| `make clean` | Limpia los artefactos de compilación |
 
-- `valid_subscriptions.json`: Clean subscriptions file used as baseline
-- `malformed_json_subscriptions.json`: Invalid JSON for error handling tests
-- `bad_url_subscriptions.json`: Subscriptions with unreachable URLs
-- `incorrect_format_subscriptions.json`: Subscriptions missing required fields
-- `valid_entities/`: Complete set of entity dictionary files
-- `missing_entities/`: Partial entity files for testing graceful degradation
+Ambos `run` y `run-local` usan `data/valid_entities/` como diccionario y muestran el top 5 de entidades.
 
-## Output Format
+## Estructura del proyecto
 
-The program prints two sections:
+```
+.
+├── build.sbt
+├── Makefile
+├── README.md
+├── INFORME.md
+├── data/
+│   ├── valid_entities/
+│   │   ├── people.txt
+│   │   ├── organizations.txt
+│   │   ├── universities.txt
+│   │   ├── places.txt
+│   │   └── languages.txt
+│   ├── valid_subscriptions.json
+│   └── local_subscriptions.json
+└── src/main/scala/
+    ├── Main.scala
+    ├── FileIO.scala
+    ├── JsonParser.scala
+    ├── Analyzer.scala
+    ├── Dictionary.scala
+    ├── NamedEntity.scala
+    ├── Formatters.scala
+    ├── CommandLineArgs.scala
+    ├── Subscription.scala
+    └── Post.scala
+```
 
-**Processing Statistics**: Shows how many feeds were successfully downloaded, how many failed, how many posts were processed, filtered, and failed.
+## Solución de problemas comunes
 
-**Top Named Entities**: Lists the most frequent entities by type and name, sorted by frequency (descending), then entity type (alphabetical), then entity name (alphabetical).
+**Error `getSubject is not supported` o `IllegalAccessError`:** Estás usando Java 24/25. El Makefile detecta Java 17 automáticamente; si falla, verificá que esté instalado con `java -version` luego de seleccionar la versión 17.
 
-## Error Handling
+**`sbt` no encontrado:** Instalá sbt desde https://www.scala-sbt.org/download.html
 
-The system handles failures gracefully:
-
-- Missing subscriptions file: Prints error and exits
-- Malformed JSON in subscriptions: Skips invalid entries, continues with valid ones
-- Network failures: Warns about failed downloads and continues with successful feeds
-- Missing entity directory: Prints error and exits
-- Missing individual entity files: Warns but continues with available dictionaries
-
-All errors are printed to console for visibility. The system continues processing valid data whenever possible.
+**Spark UI:** Al correr en modo local, la Spark UI está disponible en http://localhost:4040 mientras el programa está ejecutándose.
